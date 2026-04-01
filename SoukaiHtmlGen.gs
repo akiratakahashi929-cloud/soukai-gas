@@ -1,14 +1,18 @@
 /**
  * SoukaiHtmlGen.gs
- * 総会資料 HTML ジェネレーター
- * スプレッドシート ID: 1GF86ve7gkpuhSDmQBu-rIgmv8UdzLUTsC5xH5GjRUw0
+ * ─────────────────────────────────────────────────────────────
+ * スプレッドシート（SS_ID）のデータを読み込み、
+ * soukai_template_demo.html の書式・CSS・レイアウトで
+ * 総会資料HTMLを動的生成する。
+ *
+ * ※ SS_ID / SHEET_NAMES / readSettings() は Code.gs で定義済み。
+ * ─────────────────────────────────────────────────────────────
  */
 
-// ─────────────────────────────────────────────
-//  ユーティリティ
-// ─────────────────────────────────────────────
+// ============================================================
+// ユーティリティ
+// ============================================================
 
-/** HTML エスケープ */
 function esc(v) {
   if (v === null || v === undefined) return '';
   return String(v)
@@ -19,76 +23,87 @@ function esc(v) {
     .replace(/'/g, '&#39;');
 }
 
-/** 値を文字列にトリム */
-function trimVal(v) {
+function tv(v) {
   if (v === null || v === undefined) return '';
   return String(v).trim();
 }
 
-/** 数値をカンマ区切り書式に */
 function fmtNum(v) {
   if (v === null || v === undefined || v === '') return '';
-  var n = Number(String(v).replace(/,/g, ''));
+  var s = String(v).replace(/,/g, '');
+  var n = Number(s);
   if (isNaN(n)) return esc(v);
-  return n.toLocaleString();
+  return n.toLocaleString('ja-JP');
 }
 
-// ─────────────────────────────────────────────
-//  Web App エントリーポイント
-// ─────────────────────────────────────────────
-
-function doGet(e) {
-  try {
-    var html = generateSoukaiHtml();
-    return HtmlService.createHtmlOutput(html)
-      .setTitle('総会資料')
-      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
-  } catch (err) {
-    return HtmlService.createHtmlOutput(
-      '<pre style="color:red;white-space:pre-wrap">エラーが発生しました:\n' +
-      esc(err.message || String(err)) + '</pre>'
-    );
-  }
+/** シートのデータ行を2次元配列で返す（ヘッダー除く） */
+function getSheetRows(ss, sheetName, numCols) {
+  var s = ss.getSheetByName(sheetName);
+  if (!s || s.getLastRow() < 2) return [];
+  var rows = Math.max(s.getLastRow() - 1, 1);
+  var cols = numCols || Math.max(s.getLastColumn(), 1);
+  return s.getRange(2, 1, rows, cols).getValues();
 }
 
-// ─────────────────────────────────────────────
-//  メイン生成関数
-// ─────────────────────────────────────────────
+/** 表示値（フォーマット済み）でシートのデータ行を返す */
+function getSheetDisplayRows(ss, sheetName, numCols) {
+  var s = ss.getSheetByName(sheetName);
+  if (!s || s.getLastRow() < 2) return [];
+  var rows = Math.max(s.getLastRow() - 1, 1);
+  var cols = numCols || Math.max(s.getLastColumn(), 1);
+  return s.getRange(2, 1, rows, cols).getDisplayValues();
+}
+
+// ============================================================
+// メイン生成関数
+// ============================================================
 
 function generateSoukaiHtml() {
-  var ss = SpreadsheetApp.openById('1GF86ve7gkpuhSDmQBu-rIgmv8UdzLUTsC5xH5GjRUw0');
+  var ss = SpreadsheetApp.openById(SS_ID);
+  var st = readSettings(ss);
 
-  var parts = [];
-  parts.push(getHtmlHead());
-  parts.push('<body>');
-  parts.push(buildCoverPage(ss));
-  parts.push(buildAgendaPage(ss));
-  parts.push(buildActivityReportPage(ss));
-  parts.push(buildPrefecturalReportPage(ss));
-  parts.push(buildFinancialReportPage(ss));
-  parts.push(buildAssetInventoryPage(ss));
-  parts.push(buildBusinessPlanPage(ss));
-  parts.push(buildBudgetPage(ss));
-  parts.push(buildOrgChartPage(ss));
-  parts.push(buildMemberListPage(ss));
-  parts.push(buildBylaws1Page());
-  parts.push(buildBylaws2Page());
-  parts.push(buildBylaws3Page());
-  parts.push('</body></html>');
+  // ── 年度計算 ──
+  var nengo = st['年度'] || '令和7年度';
+  var m = nengo.match(/令和(\d+)年度/);
+  var curYear  = m ? parseInt(m[1]) : 7;
+  var prevYear = curYear - 1;
 
-  return parts.join('\n');
+  var prevNendo       = '令和' + prevYear + '年度';
+  var currentNendo    = '令和' + curYear  + '年度';
+  var prevStart       = st['会計年度開始'] || ('令和' + prevYear + '年4月1日');
+  var prevEnd         = st['会計年度終了'] || ('令和' + curYear  + '年3月31日');
+  var nextStart       = st['次年度開始']   || ('令和' + curYear  + '年4月1日');
+  var nextEnd         = st['次年度終了']   || ('令和' + (curYear + 1) + '年3月31日');
+
+  var pages = [
+    buildCoverPage(st),
+    buildAgendaPage(st, prevNendo, currentNendo),
+    buildActivityPage(ss, prevNendo, prevStart, prevEnd),
+    buildPrefecturalPage(ss, prevNendo, prevStart, prevEnd),
+    buildFinancialPage(ss, st, prevNendo, prevStart, prevEnd),
+    buildAssetPage(ss, st, prevNendo),
+    buildBusinessPlanPage(ss, currentNendo, nextStart, nextEnd),
+    buildBudgetPage(ss, currentNendo, nextStart, nextEnd),
+    buildOrgPage(ss, currentNendo),
+    buildMemberPage(ss),
+    buildBylaws1Page(),
+    buildBylaws2Page(),
+    buildBylaws3Page()
+  ];
+
+  return getHtmlHead() + pages.join('\n') + '\n</body>\n</html>';
 }
 
-// ─────────────────────────────────────────────
-//  HTML ヘッド
-// ─────────────────────────────────────────────
+// ============================================================
+// HTML Head + CSS（テンプレートと完全一致）
+// ============================================================
 
 function getHtmlHead() {
   return '<!DOCTYPE html>\n<html lang="ja">\n<head>\n' +
     '<meta charset="UTF-8">\n' +
-    '<title>総会資料 — 所沢支部青年部会</title>\n' +
+    '<title>総会資料</title>\n' +
     '<style>\n' + getCSS() + '\n</style>\n' +
-    '</head>';
+    '</head>\n<body>\n';
 }
 
 function getCSS() {
@@ -102,7 +117,10 @@ function getCSS() {
     '.h-sub{font-size:11pt;font-weight:700}',
     '.page{width:100%;min-height:257mm;page-break-after:always;position:relative;padding:0}',
     '.page:last-child{page-break-after:auto}',
-    '@media screen{body{background:#b0b0b0}.page{background:#fff;max-width:210mm;margin:20px auto;padding:20mm 18mm 20mm 22mm;box-shadow:0 3px 16px rgba(0,0,0,.25);border-radius:2px}}',
+    '@media screen{',
+    '  body{background:#b0b0b0}',
+    '  .page{background:#fff;max-width:210mm;margin:20px auto;padding:20mm 18mm 20mm 22mm;box-shadow:0 3px 16px rgba(0,0,0,.25);border-radius:2px}',
+    '}',
     '.page-no{position:absolute;bottom:0;right:0;font-size:9pt;color:#666}',
     'table{width:100%;border-collapse:collapse;font-size:9.5pt;margin-bottom:10pt}',
     'th,td{border:1px solid #333;padding:4pt 6pt;vertical-align:middle}',
@@ -138,850 +156,658 @@ function getCSS() {
   ].join('\n');
 }
 
-// ─────────────────────────────────────────────
-//  P0: 表紙
-// ─────────────────────────────────────────────
+// ============================================================
+// 表紙
+// ============================================================
 
-function buildCoverPage(ss) {
-  var sheet = ss.getSheetByName('表紙');
-  if (!sheet) return '<!-- 表紙シートが見つかりません -->';
+function buildCoverPage(st) {
+  var kaisaiDate = esc(st['総会開催日'] || '');
+  var venue      = esc(st['会場'] || '');
+  var kaijTime   = esc(st['開会時刻'] || '');
+  var kaisu      = esc(st['回数'] || '');
+  var prevStart  = esc(st['会計年度開始'] || '');
+  var prevEnd    = esc(st['会計年度終了'] || '');
 
-  var data = sheet.getDataRange().getValues();
+  // 回数を全角に変換して見出し文字列を生成
+  var titleText  = '第　' + kaisu + '　回　定　期　総　会';
 
-  // Row インデックスは 0-based
-  var date   = trimVal(data[1][6]);   // Row2, ColG (index 1,6)
-  var place  = trimVal(data[2][6]);   // Row3, ColG
-  var time   = trimVal(data[3][5]);   // Row4, ColF (index 3,5)
-  var title  = trimVal(data[15][0]);  // Row16, ColA (index 15,0)
-  var period = trimVal(data[17][0]);  // Row18, ColA (index 17,0)
-  var org1   = trimVal(data[47][2]);  // Row48, ColC (index 47,2)
-  var org2   = trimVal(data[48][2]);  // Row49, ColC (index 48,2)
-
-  var html = [];
-  html.push('<!-- ===== 表紙 ===== -->');
-  html.push('<div class="page cover-page">');
-  html.push('  <div>');
-  if (date)   html.push('    <div class="cover-info">'  + esc(date)   + '</div>');
-  if (place)  html.push('    <div class="cover-info">'  + esc(place)  + '</div>');
-  if (time)   html.push('    <div class="cover-info">'  + esc(time)   + '</div>');
-  if (title)  html.push('    <div class="cover-title">' + esc(title)  + '</div>');
-  if (period) html.push('    <div class="cover-period">'+ esc(period) + '</div>');
-  if (org1)   html.push('    <div class="cover-org">'   + esc(org1)   + '</div>');
-  if (org2)   html.push('    <div class="cover-org">'   + esc(org2)   + '</div>');
-  html.push('  </div>');
-  html.push('</div>');
-
-  return html.join('\n');
+  return [
+    '<div class="page cover-page">',
+    '  <div>',
+    '    <div class="cover-info">' + kaisaiDate + '</div>',
+    '    <div class="cover-info">於　' + venue + '</div>',
+    '    <div class="cover-info">' + kaijTime + '　開会</div>',
+    '    <div class="cover-title">' + titleText + '</div>',
+    '    <div class="cover-period">（ ' + prevStart + ' 〜 ' + prevEnd + ' ）</div>',
+    '    <div class="cover-org">埼 玉 県 ト ラ ッ ク 協 会</div>',
+    '    <div class="cover-org">所 沢 支 部 青 年 部 会</div>',
+    '  </div>',
+    '</div>'
+  ].join('\n');
 }
 
-// ─────────────────────────────────────────────
-//  P1: 総会次第
-// ─────────────────────────────────────────────
+// ============================================================
+// P1 総会次第
+// ============================================================
 
-function buildAgendaPage(ss) {
-  var sheet = ss.getSheetByName('P1\u3000総会次第');
-  if (!sheet) return '<!-- P1シートが見つかりません -->';
-
-  var data = sheet.getDataRange().getValues();
-
-  // 議案行を収集: ColC (index 2) に "議案" を含む行
-  var proposals = [];
-  for (var i = 0; i < data.length; i++) {
-    var num  = trimVal(data[i][2]);
-    var text = trimVal(data[i][4]);
-    if (num.indexOf('議案') !== -1 && text !== '') {
-      proposals.push({ num: num, text: text });
-    }
-  }
-
-  // 固定の次第項目（議案番号以外）
-  var fixedItems = [
-    { num: '１、', text: '開会の辞' },
-    { num: '２、', text: '支部長挨拶' },
-    { num: '３、', text: '議長選出' },
-    { num: '４、', text: '定足数確認' }
+function buildAgendaPage(st, prevNendo, currentNendo) {
+  var proposals = [
+    { num: '第１号議案', text: prevNendo + '　事業報告' },
+    { num: '第２号議案', text: prevNendo + '　決算報告' },
+    { num: '第３号議案', text: currentNendo + '　事業計画（案）' },
+    { num: '第４号議案', text: currentNendo + '　予算案' }
   ];
 
-  var html = [];
-  html.push('<!-- ===== P1 総会次第 ===== -->');
-  html.push('<div class="page">');
-  html.push('  <div class="agenda-wrap">');
-  html.push('    <div class="agenda-inner">');
-  html.push('      <div class="agenda-title">総　会　次　第</div>');
+  var subItems = proposals.map(function(p) {
+    return '          <div class="ag-subitem"><span class="ag-subnum">' +
+      esc(p.num) + '</span><span>' + esc(p.text) + '</span></div>';
+  }).join('\n');
 
-  // 固定項目
-  fixedItems.forEach(function(item) {
-    html.push('      <div class="ag-item"><span class="ag-num">' + esc(item.num) + '</span><span>' + esc(item.text) + '</span></div>');
+  return [
+    '<div class="page">',
+    '  <div class="agenda-wrap">',
+    '    <div class="agenda-inner">',
+    '      <div class="agenda-title">総　会　次　第</div>',
+    '      <div class="ag-item"><span class="ag-num">１、</span><span>開会の辞</span></div>',
+    '      <div class="ag-item"><span class="ag-num">２、</span><span>支部長挨拶</span></div>',
+    '      <div class="ag-item"><span class="ag-num">３、</span><span>議長選出</span></div>',
+    '      <div class="ag-item"><span class="ag-num">４、</span><span>定足数確認</span></div>',
+    '      <div class="ag-item"><span class="ag-num">５、</span><span>議　　事',
+    '        <div class="ag-sub">',
+    subItems,
+    '        </div>',
+    '      </span></div>',
+    '      <div class="ag-item"><span class="ag-num">６、</span><span>閉会の辞</span></div>',
+    '    </div>',
+    '  </div>',
+    '  <div class="page-no">P1</div>',
+    '</div>'
+  ].join('\n');
+}
+
+// ============================================================
+// P2 活動報告
+// ============================================================
+
+function buildActivityPage(ss, prevNendo, prevStart, prevEnd) {
+  // 列: 0=年, 1=月日, 2=支部事業名, 3=場所, 4=担当会社, 5=県事業名, 6=県場所
+  var rows = getSheetRows(ss, SHEET_NAMES.ACTIVITY, 7);
+
+  var tableRows = '';
+  var lastYear  = '';
+  rows.forEach(function(r) {
+    var year    = tv(r[0]);
+    var day     = tv(r[1]);
+    var jigyou  = tv(r[2]);
+    var basho   = tv(r[3]);
+    var tanto   = tv(r[4]);
+
+    if (!day && !jigyou) return; // 空行スキップ
+
+    if (year) lastYear = year;
+    var dateStr = lastYear ? lastYear + (day ? day : '') : day;
+
+    tableRows +=
+      '<tr>' +
+      '<td class="tc">' + esc(dateStr) + '</td>' +
+      '<td>' + esc(jigyou) + '</td>' +
+      '<td>' + esc(basho)  + '</td>' +
+      '<td>' + esc(tanto)  + '</td>' +
+      '</tr>\n';
   });
 
-  // 議事 + 議案
-  html.push('      <div class="ag-item"><span class="ag-num">５、</span><span>議　　事');
-  if (proposals.length > 0) {
-    html.push('        <div class="ag-sub">');
-    proposals.forEach(function(p) {
-      html.push('          <div class="ag-subitem"><span class="ag-subnum">' + esc(p.num) + '</span><span>' + esc(p.text) + '</span></div>');
-    });
-    html.push('        </div>');
-  }
-  html.push('      </span></div>');
+  if (!tableRows) tableRows = '<tr><td colspan="4" class="tc">データなし</td></tr>\n';
 
-  html.push('      <div class="ag-item"><span class="ag-num">６、</span><span>閉会の辞</span></div>');
-  html.push('    </div>');
-  html.push('  </div>');
-  html.push('  <div class="page-no">P1</div>');
-  html.push('</div>');
-
-  return html.join('\n');
+  return [
+    '<div class="page">',
+    '  <div class="h-sub" style="text-align:center;margin-bottom:2pt">埼玉県トラック協会 所沢支部 青年部会</div>',
+    '  <div class="h-main">' + esc(prevNendo) + '　活動内容</div>',
+    '  <div class="period-note">' + esc(prevStart) + ' 〜 ' + esc(prevEnd) + '</div>',
+    '  <table>',
+    '    <thead><tr>',
+    '      <th style="width:90pt">月　日</th>',
+    '      <th>支部事業名</th>',
+    '      <th style="width:70pt">場所</th>',
+    '      <th style="width:90pt">担当会社</th>',
+    '    </tr></thead>',
+    '    <tbody>',
+    tableRows,
+    '    </tbody>',
+    '  </table>',
+    '  <div class="page-no">P2</div>',
+    '</div>'
+  ].join('\n');
 }
 
-// ─────────────────────────────────────────────
-//  P2: 活動報告
-// ─────────────────────────────────────────────
+// ============================================================
+// P3 県青年部事業報告
+// ============================================================
 
-function buildActivityReportPage(ss) {
-  var sheet = ss.getSheetByName('P2\u3000活動報告');
-  if (!sheet) return '<!-- P2シートが見つかりません -->';
+function buildPrefecturalPage(ss, prevNendo, prevStart, prevEnd) {
+  // 列: 0=年, 1=月日, 2=事業名, 3=場所
+  var rows = getSheetRows(ss, SHEET_NAMES.PREFECTURAL, 4);
 
-  var data = sheet.getDataRange().getValues();
+  var tableRows = '';
+  var lastYear  = '';
+  rows.forEach(function(r) {
+    var year   = tv(r[0]);
+    var day    = tv(r[1]);
+    var jigyou = tv(r[2]);
+    var basho  = tv(r[3]);
 
-  // 期間テキスト: Row4 (index 3), ColI (index 8)
-  var periodText = trimVal(data[3][8]);
+    if (!day && !jigyou) return;
 
-  // ページタイトル (H-main): 決まった行のタイトルがあれば使う、なければデフォルト
-  // スプレッドシートに専用タイトルセルがない場合はデフォルト文字列を使用
-  var pageTitle = '活動内容';
-  // Row1 (index 0) ColA などにタイトルがあれば取得
-  var titleCandidate = trimVal(data[0][0]);
-  if (titleCandidate !== '') pageTitle = titleCandidate;
+    if (year) lastYear = year;
+    var dateStr = lastYear ? lastYear + (day ? day : '') : day;
 
-  var html = [];
-  html.push('<!-- ===== P2 活動報告 ===== -->');
-  html.push('<div class="page">');
-  html.push('  <div class="h-sub" style="text-align:center;margin-bottom:2pt">埼玉県トラック協会 所沢支部 青年部会</div>');
-  html.push('  <div class="h-main">' + esc(pageTitle) + '</div>');
-  if (periodText) {
-    html.push('  <div class="period-note">' + esc(periodText) + '</div>');
-  }
-  html.push('  <table>');
-  html.push('    <thead><tr><th style="width:90pt">月　日</th><th>支部事業名</th><th style="width:90pt">担当会社</th></tr></thead>');
-  html.push('    <tbody>');
-
-  var lastYear = '';
-  // データ行は index 4 (Row5) から
-  for (var i = 4; i < data.length; i++) {
-    var row   = data[i];
-    var year  = trimVal(row[0]);
-    var date  = trimVal(row[1]);
-    var event = trimVal(row[5]);
-    var comp  = trimVal(row[8]);
-
-    // 日付または事業名が空ならスキップ
-    if (date === '' || event === '') continue;
-
-    // 年を繰り越す
-    if (year !== '') lastYear = year;
-
-    // 月日表示: 年があれば "年X月X日"、なければ月日のみ
-    var displayDate = (lastYear !== '' && date.indexOf('年') === -1)
-      ? lastYear + date
-      : date;
-
-    html.push('      <tr><td class="tc">' + esc(displayDate) + '</td><td>' + esc(event) + '</td><td>' + esc(comp) + '</td></tr>');
-  }
-
-  html.push('    </tbody>');
-  html.push('  </table>');
-  html.push('  <div class="page-no">P2</div>');
-  html.push('</div>');
-
-  return html.join('\n');
-}
-
-// ─────────────────────────────────────────────
-//  P3: 県青年部事業報告
-// ─────────────────────────────────────────────
-
-function buildPrefecturalReportPage(ss) {
-  var sheet = ss.getSheetByName('P3\u3000県青年部事業報告');
-  if (!sheet) return '<!-- P3シートが見つかりません -->';
-
-  var data = sheet.getDataRange().getValues();
-
-  // ページタイトル
-  var pageTitle = '県青年部会事業報告';
-  var titleCandidate = trimVal(data[0][0]);
-  if (titleCandidate !== '') pageTitle = titleCandidate;
-
-  var html = [];
-  html.push('<!-- ===== P3 県青年部事業報告 ===== -->');
-  html.push('<div class="page">');
-  html.push('  <div class="h-sub" style="text-align:center;margin-bottom:2pt">埼玉県トラック協会 所沢支部 青年部会</div>');
-  html.push('  <div class="h-main">' + esc(pageTitle) + '</div>');
-  html.push('  <table>');
-  html.push('    <thead><tr><th style="width:90pt">月　日</th><th>事　業　名</th><th style="width:120pt">場　所</th></tr></thead>');
-  html.push('    <tbody>');
-
-  var lastYear = '';
-  for (var i = 4; i < data.length; i++) {
-    var row   = data[i];
-    var year  = trimVal(row[0]);
-    var date  = trimVal(row[1]);
-    var event = trimVal(row[5]);
-    var place = trimVal(row[8]);
-
-    if (date === '' || event === '') continue;
-
-    if (year !== '') lastYear = year;
-
-    var displayDate = (lastYear !== '' && date.indexOf('年') === -1)
-      ? lastYear + date
-      : date;
-
-    html.push('      <tr><td class="tc">' + esc(displayDate) + '</td><td>' + esc(event) + '</td><td>' + esc(place) + '</td></tr>');
-  }
-
-  html.push('    </tbody>');
-  html.push('  </table>');
-  html.push('  <div class="page-no">P3</div>');
-  html.push('</div>');
-
-  return html.join('\n');
-}
-
-// ─────────────────────────────────────────────
-//  P4: 決算報告
-// ─────────────────────────────────────────────
-
-function buildFinancialReportPage(ss) {
-  var sheet = ss.getSheetByName('P4\u3000決算報告');
-  if (!sheet) return '<!-- P4シートが見つかりません -->';
-
-  var data = sheet.getDataRange().getValues();
-
-  var title      = trimVal(data[0][0]);
-  var periodText = trimVal(data[2][2]);
-
-  // 収入ヘッダー: Row4 (index 3)
-  var incHdrs = [
-    trimVal(data[3][0]) || '科　目',
-    trimVal(data[3][1]) || '予算額（円）',
-    trimVal(data[3][2]) || '決算額（円）',
-    trimVal(data[3][3]) || '差　額（円）',
-    trimVal(data[3][4]) || '備考'
-  ];
-
-  // 収入データ: index 4 以降、ColA が空になるまで
-  var incRows = [];
-  var i = 4;
-  while (i < data.length && trimVal(data[i][0]) !== '') {
-    incRows.push(data[i]);
-    i++;
-  }
-
-  // 支出の部を検索
-  var expSectionRow = -1;
-  for (var j = i; j < data.length; j++) {
-    var cellVal = trimVal(data[j][0]);
-    if (cellVal.indexOf('支出の部') !== -1 || cellVal.indexOf('【支出') !== -1) {
-      expSectionRow = j;
-      break;
-    }
-  }
-
-  var expHdrs = ['科　目', '予算額（円）', '決算額（円）', '差　額（円）', '備考'];
-  var expRows = [];
-  var sigRows = [];
-
-  if (expSectionRow !== -1) {
-    // 支出ヘッダーは支出の部の次の行
-    var expHdrRow = expSectionRow + 1;
-    if (expHdrRow < data.length) {
-      expHdrs = [
-        trimVal(data[expHdrRow][0]) || '科　目',
-        trimVal(data[expHdrRow][1]) || '予算額（円）',
-        trimVal(data[expHdrRow][2]) || '決算額（円）',
-        trimVal(data[expHdrRow][3]) || '差　額（円）',
-        trimVal(data[expHdrRow][4]) || '備考'
-      ];
-    }
-    // 支出データ
-    var k = expHdrRow + 1;
-    while (k < data.length) {
-      var ca = trimVal(data[k][0]);
-      if (ca === '') { k++; continue; }
-      if (ca.indexOf('上記') !== -1) {
-        // 上記以降は署名行
-        for (var s = k; s < data.length; s++) {
-          var sigLine = trimVal(data[s][0]);
-          if (sigLine !== '') sigRows.push(sigLine);
-        }
-        break;
-      }
-      expRows.push(data[k]);
-      k++;
-    }
-  }
-
-  // 収支差額行 (最後の収入行 - 最後の支出行から計算。シートから取るのが望ましいが
-  // シート構造が不定のため、収入最終行・支出最終行からラベルを使う)
-  // 収支差額行はシートの "上記" より前の特殊行を探す
-  // ここでは incRows の最後・expRows の最後を合計行として扱い、差額行は別途生成
-  var lastIncRow = incRows.length > 0 ? incRows[incRows.length - 1] : null;
-  var lastExpRow = expRows.length > 0 ? expRows[expRows.length - 1] : null;
-
-  // 収支差額の行: シートから探す
-  var diffRow = null;
-  for (var d = 0; d < data.length; d++) {
-    var dl = trimVal(data[d][0]);
-    if (dl.indexOf('収支差額') !== -1 || dl.indexOf('次年度繰越') !== -1) {
-      diffRow = data[d];
-      break;
-    }
-  }
-
-  var html = [];
-  html.push('<!-- ===== P4 決算報告 ===== -->');
-  html.push('<div class="page">');
-  html.push('  <div class="h-main">' + esc(title || '決算報告書') + '</div>');
-
-  // 収入の部
-  html.push('  <div class="h-title" style="margin:4pt 0 3pt">【収入の部】</div>');
-  html.push('  <table>');
-  html.push('    <thead><tr>' +
-    '<th>' + esc(incHdrs[0]) + '</th>' +
-    '<th style="width:80pt">' + esc(incHdrs[1]) + '</th>' +
-    '<th style="width:80pt">' + esc(incHdrs[2]) + '</th>' +
-    '<th style="width:72pt">' + esc(incHdrs[3]) + '</th>' +
-    '<th>' + esc(incHdrs[4]) + '</th>' +
-    '</tr></thead>');
-  html.push('    <tbody>');
-  incRows.forEach(function(r, idx) {
-    var cls = (idx === incRows.length - 1) ? ' class="row-total"' : '';
-    html.push('      <tr' + cls + '><td>' + esc(trimVal(r[0])) + '</td>' +
-      '<td class="tr">' + esc(fmtNum(r[1])) + '</td>' +
-      '<td class="tr">' + esc(fmtNum(r[2])) + '</td>' +
-      '<td class="tr">' + esc(fmtNum(r[3])) + '</td>' +
-      '<td>' + esc(trimVal(r[4])) + '</td></tr>');
-  });
-  html.push('    </tbody>');
-  html.push('  </table>');
-
-  // 支出の部
-  html.push('  <div class="h-title" style="margin:4pt 0 3pt">【支出の部】</div>');
-  html.push('  <table>');
-  html.push('    <thead><tr>' +
-    '<th>' + esc(expHdrs[0]) + '</th>' +
-    '<th style="width:80pt">' + esc(expHdrs[1]) + '</th>' +
-    '<th style="width:80pt">' + esc(expHdrs[2]) + '</th>' +
-    '<th style="width:72pt">' + esc(expHdrs[3]) + '</th>' +
-    '<th>' + esc(expHdrs[4]) + '</th>' +
-    '</tr></thead>');
-  html.push('    <tbody>');
-  expRows.forEach(function(r, idx) {
-    var cls = (idx === expRows.length - 1) ? ' class="row-total"' : '';
-    html.push('      <tr' + cls + '><td>' + esc(trimVal(r[0])) + '</td>' +
-      '<td class="tr">' + esc(fmtNum(r[1])) + '</td>' +
-      '<td class="tr">' + esc(fmtNum(r[2])) + '</td>' +
-      '<td class="tr">' + esc(fmtNum(r[3])) + '</td>' +
-      '<td>' + esc(trimVal(r[4])) + '</td></tr>');
-  });
-  html.push('    </tbody>');
-  html.push('  </table>');
-
-  // 収支差額行
-  if (diffRow) {
-    html.push('  <table style="margin-top:6pt"><tr class="row-total" style="background:#E8F5E9">' +
-      '<td>' + esc(trimVal(diffRow[0])) + '</td>' +
-      '<td class="tr" style="width:80pt">' + esc(fmtNum(diffRow[1])) + '</td>' +
-      '<td class="tr" style="width:80pt">' + esc(fmtNum(diffRow[2])) + '</td>' +
-      '<td class="tr" style="width:72pt">' + esc(fmtNum(diffRow[3])) + '</td>' +
-      '<td>' + esc(trimVal(diffRow[4])) + '</td></tr></table>');
-  }
-
-  // 署名
-  if (sigRows.length > 0) {
-    html.push('  <div class="sig">' + sigRows.map(esc).join('<br>') + '</div>');
-  }
-
-  html.push('  <div class="page-no">P4</div>');
-  html.push('</div>');
-
-  return html.join('\n');
-}
-
-// ─────────────────────────────────────────────
-//  P5: 財産目録
-// ─────────────────────────────────────────────
-
-function buildAssetInventoryPage(ss) {
-  var sheet = ss.getSheetByName('P5\u3000財産目録');
-  if (!sheet) return '<!-- P5シートが見つかりません -->';
-
-  var data = sheet.getDataRange().getValues();
-
-  var title  = trimVal(data[0][0]) || '財　産　目　録';
-  var dateStr = trimVal(data[1][2]);
-
-  var html = [];
-  html.push('<!-- ===== P5 財産目録 ===== -->');
-  html.push('<div class="page">');
-  html.push('  <div class="h-main">' + esc(title) + '</div>');
-  if (dateStr) {
-    html.push('  <div class="period-note">' + esc(dateStr) + '</div>');
-  }
-  html.push('  <table>');
-  html.push('    <thead><tr><th>科　目</th><th style="width:120pt">金額（円）</th><th>適　用</th></tr></thead>');
-  html.push('    <tbody>');
-
-  var sigRows = [];
-  for (var i = 4; i < data.length; i++) {
-    var label  = trimVal(data[i][0]);
-    var amount = trimVal(data[i][1]);
-    var note   = trimVal(data[i][2]);
-
-    if (label === '') continue;
-
-    if (label.indexOf('上記') !== -1) {
-      // 上記以降は署名
-      for (var s = i; s < data.length; s++) {
-        var sl = trimVal(data[s][0]);
-        if (sl !== '') sigRows.push(sl);
-      }
-      break;
-    }
-
-    var rowCls = '';
-    if (label.indexOf('部】') !== -1) {
-      rowCls = ' class="row-section"';
-    } else if (label.indexOf('合計') !== -1 || label.indexOf('正味資産') !== -1) {
-      // 正味資産は緑背景
-      if (label.indexOf('正味資産') !== -1) {
-        rowCls = ' class="row-total" style="background:#E8F5E9"';
-      } else {
-        rowCls = ' class="row-total"';
-      }
-    }
-
-    html.push('      <tr' + rowCls + '><td>' + esc(label) + '</td>' +
-      '<td class="tr">' + esc(fmtNum(amount)) + '</td>' +
-      '<td>' + esc(note) + '</td></tr>');
-  }
-
-  html.push('    </tbody>');
-  html.push('  </table>');
-
-  if (sigRows.length > 0) {
-    html.push('  <div class="sig">' + sigRows.map(esc).join('<br>') + '</div>');
-  }
-
-  html.push('  <div class="page-no">P5</div>');
-  html.push('</div>');
-
-  return html.join('\n');
-}
-
-// ─────────────────────────────────────────────
-//  P6: 事業計画案
-// ─────────────────────────────────────────────
-
-function buildBusinessPlanPage(ss) {
-  var sheet = ss.getSheetByName('P6\u3000事業計画案');
-  if (!sheet) return '<!-- P6シートが見つかりません -->';
-
-  var data = sheet.getDataRange().getValues();
-
-  var title        = trimVal(data[0][0]) || '事業計画（案）';
-  var sectionTitle = trimVal(data[5][0]) || '１・事業計画';
-
-  // 計画項目: ColC (index 2) で /^（[^）]+）/ にマッチする値
-  var planItems = [];
-  var planPattern = /^（[^）]+）/;
-  for (var i = 0; i < data.length; i++) {
-    var val = trimVal(data[i][2]);
-    if (planPattern.test(val)) {
-      // 番号部分と内容部分を分割
-      var match = val.match(/^（[^）]+）/);
-      var num   = match ? match[0] : '';
-      var text  = val.substring(num.length).trim();
-      planItems.push({ num: num, text: text });
-    }
-  }
-
-  var html = [];
-  html.push('<!-- ===== P6 事業計画（案） ===== -->');
-  html.push('<div class="page">');
-  html.push('  <div class="h-main">' + esc(title) + '</div>');
-  html.push('  <div class="plan-wrap">');
-  html.push('    <div class="plan-inner">');
-  html.push('      <div class="plan-section">' + esc(sectionTitle) + '</div>');
-
-  planItems.forEach(function(item) {
-    html.push('      <div class="plan-item"><span class="plan-num">' + esc(item.num) + '</span><span>' + esc(item.text) + '</span></div>');
+    tableRows +=
+      '<tr>' +
+      '<td class="tc">' + esc(dateStr) + '</td>' +
+      '<td>' + esc(jigyou) + '</td>' +
+      '<td>' + esc(basho)  + '</td>' +
+      '</tr>\n';
   });
 
-  html.push('    </div>');
-  html.push('  </div>');
-  html.push('  <div class="page-no">P6</div>');
-  html.push('</div>');
+  if (!tableRows) tableRows = '<tr><td colspan="3" class="tc">データなし</td></tr>\n';
 
-  return html.join('\n');
+  return [
+    '<div class="page">',
+    '  <div class="h-sub" style="text-align:center;margin-bottom:2pt">埼玉県トラック協会 所沢支部 青年部会</div>',
+    '  <div class="h-main">' + esc(prevNendo) + '　県青年部会事業報告</div>',
+    '  <div class="period-note">' + esc(prevStart) + ' 〜 ' + esc(prevEnd) + '</div>',
+    '  <table>',
+    '    <thead><tr>',
+    '      <th style="width:90pt">月　日</th>',
+    '      <th>事　業　名</th>',
+    '      <th style="width:120pt">場　所</th>',
+    '    </tr></thead>',
+    '    <tbody>',
+    tableRows,
+    '    </tbody>',
+    '  </table>',
+    '  <div class="page-no">P3</div>',
+    '</div>'
+  ].join('\n');
 }
 
-// ─────────────────────────────────────────────
-//  P7: 予算案
-// ─────────────────────────────────────────────
+// ============================================================
+// P4 収支決算報告書
+// ============================================================
 
-function buildBudgetPage(ss) {
-  var sheet = ss.getSheetByName('P7\u3000予算案');
-  if (!sheet) return '<!-- P7シートが見つかりません -->';
+function buildFinancialPage(ss, st, prevNendo, prevStart, prevEnd) {
+  // 決算_収入: 科目, 予算額, 決算額, 差異, 摘要
+  var incRows = getSheetDisplayRows(ss, SHEET_NAMES.INCOME_SUMMARY, 5);
+  // 決算_支出: 科目, 予算額, 決算額, 差異, 摘要
+  var expRows = getSheetDisplayRows(ss, SHEET_NAMES.EXPENSE_SUMMARY, 5);
 
-  var data = sheet.getDataRange().getValues();
+  // 収入テーブル
+  var incHtml = buildFinTable(incRows);
 
-  var title = trimVal(data[0][0]) || '予算（案）';
+  // 支出テーブル
+  var expHtml = buildFinTable(expRows);
 
-  // 収入ヘッダー: Row4 (index 3)
-  var incHdrs = [
-    trimVal(data[3][0]) || '科　目',
-    trimVal(data[3][1]) || '前年度予算額',
-    trimVal(data[3][2]) || '予算額（円）',
-    trimVal(data[3][3]) || '増　減',
-    trimVal(data[3][4]) || '摘　要'
-  ];
+  // 収支差額行（収入合計 - 支出合計）
+  var incTotalRow = findTotalRow(incRows);
+  var expTotalRow = findTotalRow(expRows);
+  var netBudget   = calcNet(incTotalRow, 1, expTotalRow, 1);
+  var netActual   = calcNet(incTotalRow, 2, expTotalRow, 2);
+  var netDiff     = calcNet(incTotalRow, 3, expTotalRow, 3);
 
-  // 収入データ: index 4 以降、ColA が空になるまで
-  var incRows = [];
-  var i = 4;
-  while (i < data.length && trimVal(data[i][0]) !== '') {
-    incRows.push(data[i]);
-    i++;
-  }
+  var sigDate    = esc(st['報告日'] || '');
+  var accountant = esc(st['会計担当'] || '');
+  var auditor    = esc(st['監査担当'] || '');
+  var auditDate  = esc(st['監査日'] || '');
 
-  // 支出の部を検索
-  var expSectionRow = -1;
-  for (var j = i; j < data.length; j++) {
-    var cv = trimVal(data[j][0]);
-    if (cv.indexOf('支出の部') !== -1 || cv.indexOf('【支出') !== -1) {
-      expSectionRow = j;
-      break;
-    }
-  }
-
-  var expHdrs = ['科　目', '前年度予算額', '予算額（円）', '増　減', '摘　要'];
-  var expRows = [];
-
-  if (expSectionRow !== -1) {
-    var expHdrRow = expSectionRow + 1;
-    if (expHdrRow < data.length) {
-      expHdrs = [
-        trimVal(data[expHdrRow][0]) || '科　目',
-        trimVal(data[expHdrRow][1]) || '前年度予算額',
-        trimVal(data[expHdrRow][2]) || '予算額（円）',
-        trimVal(data[expHdrRow][3]) || '増　減',
-        trimVal(data[expHdrRow][4]) || '摘　要'
-      ];
-    }
-    var k = expHdrRow + 1;
-    while (k < data.length) {
-      var ca = trimVal(data[k][0]);
-      if (ca === '') { k++; continue; }
-      if (ca.indexOf('上記') !== -1) break;
-      expRows.push(data[k]);
-      k++;
-    }
-  }
-
-  var html = [];
-  html.push('<!-- ===== P7 予算案 ===== -->');
-  html.push('<div class="page">');
-  html.push('  <div class="h-main">' + esc(title) + '</div>');
-
-  // 収入の部
-  html.push('  <div class="h-title" style="margin:4pt 0 3pt">【収入の部】</div>');
-  html.push('  <table>');
-  html.push('    <thead><tr>' +
-    '<th>' + esc(incHdrs[0]) + '</th>' +
-    '<th style="width:80pt">' + esc(incHdrs[1]) + '</th>' +
-    '<th style="width:80pt">' + esc(incHdrs[2]) + '</th>' +
-    '<th style="width:72pt">' + esc(incHdrs[3]) + '</th>' +
-    '<th>' + esc(incHdrs[4]) + '</th>' +
-    '</tr></thead>');
-  html.push('    <tbody>');
-  incRows.forEach(function(r, idx) {
-    var cls = (idx === incRows.length - 1) ? ' class="row-total"' : '';
-    html.push('      <tr' + cls + '><td>' + esc(trimVal(r[0])) + '</td>' +
-      '<td class="tr">' + esc(fmtNum(r[1])) + '</td>' +
-      '<td class="tr">' + esc(fmtNum(r[2])) + '</td>' +
-      '<td class="tr">' + esc(fmtNum(r[3])) + '</td>' +
-      '<td>' + esc(trimVal(r[4])) + '</td></tr>');
-  });
-  html.push('    </tbody>');
-  html.push('  </table>');
-
-  // 支出の部
-  html.push('  <div class="h-title" style="margin:4pt 0 3pt">【支出の部】</div>');
-  html.push('  <table>');
-  html.push('    <thead><tr>' +
-    '<th>' + esc(expHdrs[0]) + '</th>' +
-    '<th style="width:80pt">' + esc(expHdrs[1]) + '</th>' +
-    '<th style="width:80pt">' + esc(expHdrs[2]) + '</th>' +
-    '<th style="width:72pt">' + esc(expHdrs[3]) + '</th>' +
-    '<th>' + esc(expHdrs[4]) + '</th>' +
-    '</tr></thead>');
-  html.push('    <tbody>');
-  expRows.forEach(function(r, idx) {
-    var cls = (idx === expRows.length - 1) ? ' class="row-total"' : '';
-    html.push('      <tr' + cls + '><td>' + esc(trimVal(r[0])) + '</td>' +
-      '<td class="tr">' + esc(fmtNum(r[1])) + '</td>' +
-      '<td class="tr">' + esc(fmtNum(r[2])) + '</td>' +
-      '<td class="tr">' + esc(fmtNum(r[3])) + '</td>' +
-      '<td>' + esc(trimVal(r[4])) + '</td></tr>');
-  });
-  html.push('    </tbody>');
-  html.push('  </table>');
-
-  html.push('  <div class="page-no">P7</div>');
-  html.push('</div>');
-
-  return html.join('\n');
+  return [
+    '<div class="page">',
+    '  <div class="h-main">' + esc(prevNendo) + '　青年部収支決算報告書</div>',
+    '  <div class="h-title" style="margin:4pt 0 3pt">【収入の部】</div>',
+    '  <div class="period-note">' + esc(prevStart) + ' 〜 ' + esc(prevEnd) + '</div>',
+    '  <table>',
+    '    <thead><tr>',
+    '      <th>科　目</th>',
+    '      <th style="width:80pt">予算額（円）</th>',
+    '      <th style="width:80pt">決算額（円）</th>',
+    '      <th style="width:72pt">差　額（円）</th>',
+    '      <th>備考</th>',
+    '    </tr></thead>',
+    '    <tbody>' + incHtml + '</tbody>',
+    '  </table>',
+    '  <div class="h-title" style="margin:4pt 0 3pt">【支出の部】</div>',
+    '  <table>',
+    '    <thead><tr>',
+    '      <th>科　目</th>',
+    '      <th style="width:80pt">予算額（円）</th>',
+    '      <th style="width:80pt">決算額（円）</th>',
+    '      <th style="width:72pt">差　額（円）</th>',
+    '      <th>備考</th>',
+    '    </tr></thead>',
+    '    <tbody>' + expHtml + '</tbody>',
+    '  </table>',
+    '  <table style="margin-top:6pt">',
+    '    <tbody>',
+    '      <tr class="row-total" style="background:#E8F5E9">',
+    '        <td>収支差額（次年度繰越金）</td>',
+    '        <td class="tr" style="width:80pt">' + esc(netBudget)  + '</td>',
+    '        <td class="tr" style="width:80pt">' + esc(netActual)  + '</td>',
+    '        <td class="tr" style="width:72pt">' + esc(netDiff)    + '</td>',
+    '        <td></td>',
+    '      </tr>',
+    '    </tbody>',
+    '  </table>',
+    '  <div class="sig">',
+    '    上記の通りご報告いたします。<br>',
+    '    ' + sigDate + '　　　　会計　' + accountant + '<br><br>',
+    '    上記各項について監査した結果正確であることを認めます。<br>',
+    '    ' + auditDate + '　　　　会計監査　' + auditor,
+    '  </div>',
+    '  <div class="page-no">P4</div>',
+    '</div>'
+  ].join('\n');
 }
 
-// ─────────────────────────────────────────────
-//  P8: 組織図
-// ─────────────────────────────────────────────
+/** 決算テーブルのtbody行HTMLを生成 */
+function buildFinTable(rows) {
+  var html = '';
+  rows.forEach(function(r, i) {
+    var label  = tv(r[0]);
+    var budget = tv(r[1]);
+    var actual = tv(r[2]);
+    var diff   = tv(r[3]);
+    var note   = tv(r[4]);
+    if (!label) return;
+    var isTotal = (label === '合計' || i === rows.length - 1);
+    var cls = isTotal ? ' class="row-total"' : '';
+    html +=
+      '<tr' + cls + '>' +
+      '<td>' + esc(label)  + '</td>' +
+      '<td class="tr">' + esc(budget) + '</td>' +
+      '<td class="tr">' + esc(actual) + '</td>' +
+      '<td class="tr">' + esc(diff)   + '</td>' +
+      '<td>' + esc(note)   + '</td>' +
+      '</tr>\n';
+  });
+  return html;
+}
 
-function buildOrgChartPage(ss) {
-  var sheet = ss.getSheetByName('P8\u3000組織図');
-  if (!sheet) return '<!-- P8シートが見つかりません -->';
-
-  // GAS は 1-indexed
-  function gc(row, col) {
-    var v = sheet.getRange(row, col).getValue();
-    return trimVal(v);
+/** 合計行を探す（'合計'ラベルか最終行） */
+function findTotalRow(rows) {
+  for (var i = 0; i < rows.length; i++) {
+    if (tv(rows[i][0]) === '合計') return rows[i];
   }
+  return rows.length > 0 ? rows[rows.length - 1] : null;
+}
 
-  var advisorRole      = gc(10, 16);  // P10
-  var advisorName      = gc(10, 19);  // S10
-  var presidentRole    = gc(13, 11);  // K13
-  var presidentName    = gc(13, 13);  // M13
-  var officeRole       = gc(18, 4);   // D18
-  var officeName       = gc(18, 8);   // H18
-  var auditorName      = gc(18, 13);  // M18
-  var auditorRole      = gc(18, 17);  // Q18
-  var subOfficeRole    = gc(23, 4);   // D23
-  var subOfficeName    = gc(23, 8);   // H23
-  var accountantName   = gc(23, 13);  // M23
-  var accountantRole   = gc(23, 17);  // Q23
-  var vpRole           = gc(31, 10);  // J31
-  var vpName           = gc(31, 14);  // N31
-  var ccRole           = gc(39, 10);  // J39
-  var ccName           = gc(42, 10);  // J42
+/** 表示値の差額を計算 */
+function calcNet(incRow, col, expRow, col2) {
+  if (!incRow || !expRow) return '';
+  var inc = Number(String(tv(incRow[col])).replace(/,/g, ''));
+  var exp = Number(String(tv(expRow[col2 !== undefined ? col2 : col])).replace(/,/g, ''));
+  if (isNaN(inc) || isNaN(exp)) return '';
+  return (inc - exp).toLocaleString('ja-JP');
+}
 
-  // 部会員グリッド
-  var memberCoords = [
-    [50,4],[50,8],[50,12],[50,16],
-    [52,4],[52,8],[52,12],[52,16],
-    [54,4],[54,8],[54,12],[54,16],
-    [56,4],[56,8],[56,12],[56,16]
-  ];
-  var members = memberCoords.map(function(coord) {
-    return gc(coord[0], coord[1]);
-  }).filter(function(v) { return v !== ''; });
+// ============================================================
+// P5 財産目録
+// ============================================================
 
-  // ページタイトル
-  var pageTitle = '組織図';
-  try {
-    var t = gc(1, 1);
-    if (t !== '') pageTitle = t;
-  } catch(e) {}
+function buildAssetPage(ss, st, prevNendo) {
+  // 列: 0=科目, 1=金額, 2=適用
+  var rows = getSheetDisplayRows(ss, SHEET_NAMES.ASSETS, 3);
 
-  var html = [];
-  html.push('<!-- ===== P8 組織図 ===== -->');
-  html.push('<div class="page">');
-  html.push('  <div class="h-main">令和度　青年部組織図</div>');
-  html.push('  <div style="display:flex;flex-direction:column;align-items:center;font-family:\'Noto Sans JP\',sans-serif;font-size:9pt;padding:2pt 0">');
+  var tableRows = '';
+  rows.forEach(function(r) {
+    var label = tv(r[0]);
+    var kin   = tv(r[1]);
+    var tekiy = tv(r[2]);
+    if (!label && !kin) return;
 
-  // 総会ボックス
-  html.push('    <div style="border:1.5px solid #111;padding:4px 36px;font-size:10.5pt;font-weight:700;letter-spacing:.25em;background:#fff">総　会</div>');
+    var isSection = label.indexOf('【') === 0 || label.indexOf('部】') > -1;
+    var isTotal   = label.indexOf('合計') > -1 || label === '正味資産';
+    var cls = isSection ? 'class="row-section"' : (isTotal ? 'class="row-total"' : '');
 
-  // 顧問ブロック
+    tableRows +=
+      '<tr ' + cls + '>' +
+      '<td>' + esc(label) + '</td>' +
+      '<td class="tr">' + esc(kin) + '</td>' +
+      '<td>' + esc(tekiy) + '</td>' +
+      '</tr>\n';
+  });
+
+  if (!tableRows) tableRows = '<tr><td colspan="3" class="tc">データなし</td></tr>\n';
+
+  var asOfDate   = esc(st['会計年度終了'] || '');
+  var sigDate    = esc(st['報告日'] || '');
+  var accountant = esc(st['会計担当'] || '');
+  var auditor    = esc(st['監査担当'] || '');
+  var auditDate  = esc(st['監査日'] || '');
+
+  return [
+    '<div class="page">',
+    '  <div class="h-main">財　産　目　録</div>',
+    '  <div class="period-note">' + asOfDate + '現在</div>',
+    '  <table>',
+    '    <thead><tr>',
+    '      <th>科　目</th>',
+    '      <th style="width:120pt">金額（円）</th>',
+    '      <th>適　用</th>',
+    '    </tr></thead>',
+    '    <tbody>',
+    tableRows,
+    '    </tbody>',
+    '  </table>',
+    '  <div class="sig">',
+    '    上記の通りご報告いたします。<br>',
+    '    ' + sigDate + '　　会計　' + accountant + '<br><br>',
+    '    上記各項について監査した結果正確であることを認めます。<br>',
+    '    ' + auditDate + '　　会計監査　' + auditor,
+    '  </div>',
+    '  <div class="page-no">P5</div>',
+    '</div>'
+  ].join('\n');
+}
+
+// ============================================================
+// P6 事業計画（案）
+// ============================================================
+
+function buildBusinessPlanPage(ss, currentNendo, nextStart, nextEnd) {
+  // 列: 0=番号, 1=事業計画項目
+  var rows = getSheetRows(ss, SHEET_NAMES.PLAN, 2);
+
+  var items = '';
+  var nums = ['（１）','（２）','（３）','（４）','（５）','（６）','（７）','（８）','（９）','（１０）'];
+  rows.forEach(function(r, i) {
+    var text = tv(r[1]);
+    if (!text) return;
+    var numLabel = nums[i] || ('（' + (i + 1) + '）');
+    items +=
+      '<div class="plan-item">' +
+      '<span class="plan-num">' + esc(numLabel) + '</span>' +
+      '<span>' + esc(text) + '</span>' +
+      '</div>\n';
+  });
+
+  if (!items) items = '<div class="plan-item"><span>データなし</span></div>';
+
+  return [
+    '<div class="page">',
+    '  <div class="h-main">' + esc(currentNendo) + '　事業計画（案）</div>',
+    '  <div class="period-note">' + esc(nextStart) + ' 〜 ' + esc(nextEnd) + '</div>',
+    '  <div class="plan-wrap">',
+    '    <div class="plan-inner">',
+    '      <div class="plan-section">１・事業計画</div>',
+    items,
+    '    </div>',
+    '  </div>',
+    '  <div class="page-no">P6</div>',
+    '</div>'
+  ].join('\n');
+}
+
+// ============================================================
+// P7 収支予算（案）
+// ============================================================
+
+function buildBudgetPage(ss, currentNendo, nextStart, nextEnd) {
+  // 予算_収入: 科目, 前年度予算額, 予算額, 増減, 摘要
+  var incRows = getSheetDisplayRows(ss, SHEET_NAMES.BUDGET_IN, 5);
+  // 予算_支出: 科目, 前年度予算額, 予算額, 増減, 摘要
+  var expRows = getSheetDisplayRows(ss, SHEET_NAMES.BUDGET_OUT, 5);
+
+  var incHtml = buildBudgetTable(incRows);
+  var expHtml = buildBudgetTable(expRows);
+
+  return [
+    '<div class="page">',
+    '  <div class="h-main">' + esc(currentNendo) + '　青年部収支予算（案）</div>',
+    '  <div class="h-title" style="margin:4pt 0 3pt">【収入の部】</div>',
+    '  <div class="period-note">' + esc(nextStart) + ' 〜 ' + esc(nextEnd) + '</div>',
+    '  <table>',
+    '    <thead><tr>',
+    '      <th>科　目</th>',
+    '      <th style="width:80pt">前年度予算額</th>',
+    '      <th style="width:80pt">予算額（円）</th>',
+    '      <th style="width:72pt">増　減</th>',
+    '      <th>摘　要</th>',
+    '    </tr></thead>',
+    '    <tbody>' + incHtml + '</tbody>',
+    '  </table>',
+    '  <div class="h-title" style="margin:4pt 0 3pt">【支出の部】</div>',
+    '  <table>',
+    '    <thead><tr>',
+    '      <th>科　目</th>',
+    '      <th style="width:80pt">前年度予算額</th>',
+    '      <th style="width:80pt">予算額（円）</th>',
+    '      <th style="width:72pt">増　減</th>',
+    '      <th>摘　要</th>',
+    '    </tr></thead>',
+    '    <tbody>' + expHtml + '</tbody>',
+    '  </table>',
+    '  <div class="page-no">P7</div>',
+    '</div>'
+  ].join('\n');
+}
+
+function buildBudgetTable(rows) {
+  var html = '';
+  rows.forEach(function(r, i) {
+    var label   = tv(r[0]);
+    var prevBud = tv(r[1]);
+    var budget  = tv(r[2]);
+    var diff    = tv(r[3]);
+    var note    = tv(r[4]);
+    if (!label) return;
+    var isTotal = (label === '合計' || i === rows.length - 1);
+    var cls = isTotal ? ' class="row-total"' : '';
+    html +=
+      '<tr' + cls + '>' +
+      '<td>' + esc(label)   + '</td>' +
+      '<td class="tr">' + esc(prevBud) + '</td>' +
+      '<td class="tr">' + esc(budget)  + '</td>' +
+      '<td class="tr">' + esc(diff)    + '</td>' +
+      '<td>' + esc(note)    + '</td>' +
+      '</tr>\n';
+  });
+  return html;
+}
+
+// ============================================================
+// P8 組織図
+// ============================================================
+
+function buildOrgPage(ss, currentNendo) {
+  // 組織情報: 役職, 氏名, 備考
+  var orgRows = getSheetRows(ss, SHEET_NAMES.ORG, 3);
+  var org = {};
+  orgRows.forEach(function(r) {
+    var role = tv(r[0]);
+    if (role) org[role] = { name: tv(r[1]), note: tv(r[2]) };
+  });
+
+  // 会員名簿から部会員を取得
+  var memRows = getSheetRows(ss, SHEET_NAMES.MEMBERS, 3);
+  var fukaiin = [];
+  memRows.forEach(function(r) {
+    if (tv(r[1]) === '部会員' && tv(r[2])) fukaiin.push(tv(r[2]));
+  });
+
+  var get = function(role) { return org[role] ? org[role].name : ''; };
+  var getNote = function(role) { return org[role] ? org[role].note : ''; };
+
+  var advisorName      = get('顧問');
+  var presidentName    = get('会長');
+  var vicePresName     = get('副会長');
+  var vicePresNote     = getNote('副会長');
+  var auditorName      = get('会計監査');
+  var accountantName   = get('会計');
+  var officeName       = get('事務局');
+  var subOfficeName    = get('事務局補佐');
+  var committeeName    = get('事業委員長');
+
+  var advisorBlock = '';
   if (advisorName) {
-    html.push('    <div style="position:relative;width:100%;height:32px;display:flex;justify-content:center">');
-    html.push('      <div style="width:1.5px;height:100%;background:#333"></div>');
-    html.push('      <div style="position:absolute;top:16px;left:50%;width:100px;height:1.5px;background:#333"></div>');
-    html.push('      <div style="position:absolute;top:4px;left:calc(50% + 100px);border:1px solid #880e4f;padding:2px 10px;font-size:9pt;background:#fce4ec;text-align:center;white-space:nowrap">');
-    html.push('        ' + esc(advisorRole || '顧　問') + '<br>');
-    html.push('        <span style="font-weight:400">' + esc(advisorName) + '</span>');
-    html.push('      </div>');
-    html.push('    </div>');
+    advisorBlock = [
+      '<div style="position:relative;width:100%;height:32px;display:flex;justify-content:center">',
+      '  <div style="width:1.5px;height:100%;background:#333"></div>',
+      '  <div style="position:absolute;top:16px;left:50%;width:100px;height:1.5px;background:#333"></div>',
+      '  <div style="position:absolute;top:4px;left:calc(50% + 100px);border:1px solid #880e4f;padding:2px 10px;font-size:9pt;background:#fce4ec;text-align:center;white-space:nowrap">',
+      '    顧　問<br><span style="font-weight:400">' + esc(advisorName) + '</span>',
+      '  </div>',
+      '</div>'
+    ].join('\n');
   } else {
-    html.push('    <div style="width:1.5px;height:32px;background:#333"></div>');
+    advisorBlock = '<div style="width:1.5px;height:32px;background:#333;margin:0 auto"></div>';
   }
 
-  // 会長ボックス
-  html.push('    <div style="border:1.5px solid #111;padding:4px 28px;font-size:10.5pt;font-weight:700;background:#fff">');
-  html.push('      ' + esc((presidentRole || '会　長') + (presidentName ? '　' + presidentName : '')));
-  html.push('    </div>');
-
-  // 縦線
-  html.push('    <div style="width:1.5px;height:24px;background:#333"></div>');
-
-  // 役員会十字ハブ
-  html.push('    <div style="position:relative;width:420px;text-align:center;padding:26px 0;margin-bottom:2px">');
-  html.push('      <div style="position:absolute;top:0;bottom:0;left:50%;width:1.5px;background:#333;margin-left:-0.75px;z-index:1"></div>');
-  html.push('      <div style="position:absolute;top:50%;left:50px;right:50px;height:1.5px;background:#333;margin-top:-0.75px;z-index:1"></div>');
-  html.push('      <div style="position:absolute;top:0;bottom:0;left:50px;width:1.5px;background:#333;margin-left:-0.75px;z-index:1"></div>');
-  html.push('      <div style="position:absolute;top:0;bottom:0;right:50px;width:1.5px;background:#333;margin-right:-0.75px;z-index:1"></div>');
-  html.push('      <div style="position:relative;z-index:2;display:inline-block;border:1.5px solid #111;background:#fff;padding:6px 20px;font-weight:700;letter-spacing:.1em;font-size:10pt">役員会</div>');
-
-  // 左上：事務局
-  html.push('      <div style="position:absolute;top:-10px;left:50px;transform:translateX(-50%);z-index:2;border:1px solid #333;background:#fff;padding:4px 12px;text-align:center;min-width:105px;font-weight:700;font-size:9.5pt">');
-  html.push('        ' + esc(officeRole || '事務局'));
-  html.push('        <div style="font-weight:400;font-size:8.5pt;margin-top:3px">' + esc(officeName) + '</div>');
-  html.push('      </div>');
-
-  // 左下：事務局補佐
-  html.push('      <div style="position:absolute;bottom:-10px;left:50px;transform:translateX(-50%);z-index:2;border:1px solid #333;background:#fff;padding:4px 12px;text-align:center;min-width:105px;font-weight:700;font-size:9.5pt">');
-  html.push('        ' + esc(subOfficeRole || '事務局補佐'));
-  html.push('        <div style="font-weight:400;font-size:8.5pt;margin-top:3px">' + esc(subOfficeName) + '</div>');
-  html.push('      </div>');
-
-  // 右上：会計監査
-  html.push('      <div style="position:absolute;top:-10px;right:50px;transform:translateX(50%);z-index:2;border:1px solid #333;background:#fff;padding:4px 12px;text-align:center;min-width:105px;font-weight:700;font-size:9.5pt">');
-  html.push('        ' + esc(auditorRole || '会計監査'));
-  html.push('        <div style="font-weight:400;font-size:8.5pt;margin-top:3px">' + esc(auditorName) + '</div>');
-  html.push('      </div>');
-
-  // 右下：会計
-  html.push('      <div style="position:absolute;bottom:-10px;right:50px;transform:translateX(50%);z-index:2;border:1px solid #333;background:#fff;padding:4px 12px;text-align:center;min-width:105px;font-weight:700;font-size:9.5pt">');
-  html.push('        ' + esc(accountantRole || '会　計'));
-  html.push('        <div style="font-weight:400;font-size:8.5pt;margin-top:3px">' + esc(accountantName) + '</div>');
-  html.push('      </div>');
-
-  html.push('    </div>');
-
-  // 縦線
-  html.push('    <div style="width:1.5px;height:24px;background:#333"></div>');
-
-  // 副会長
-  if (vpName) {
-    html.push('    <div style="border:1px solid #333;background:#fff;padding:4px 16px;font-weight:700;font-size:9.5pt;text-align:center">');
-    html.push('      ' + esc(vpRole || '副会長'));
-    html.push('      <div style="font-weight:400;font-size:8.5pt;margin-top:3px">' + esc(vpName) + '</div>');
-    html.push('    </div>');
-    html.push('    <div style="width:1.5px;height:18px;background:#333"></div>');
+  var viceLabel = vicePresNote ? esc(vicePresNote) : '副会長';
+  var committeeBlock = '';
+  if (committeeName) {
+    committeeBlock = [
+      '<div style="width:1.5px;height:18px;background:#333;margin:0 auto"></div>',
+      '<div style="border:1px solid #333;background:#fff;padding:4px 20px;font-weight:700;font-size:9.5pt;text-align:center;display:inline-block">',
+      '  事業委員長<br><span style="font-weight:400;font-size:8.5pt;margin-top:3px;display:block">' + esc(committeeName) + '</span>',
+      '</div>'
+    ].join('\n');
   }
 
-  // 事業委員長
-  if (ccName) {
-    html.push('    <div style="border:1px solid #333;background:#fff;padding:4px 20px;font-weight:700;font-size:9.5pt;text-align:center">');
-    html.push('      ' + esc(ccRole || '事業委員長'));
-    html.push('      <div style="font-weight:400;font-size:8.5pt;margin-top:3px">' + esc(ccName) + '</div>');
-    html.push('    </div>');
-  }
+  var membersGrid = fukaiin.map(function(name) {
+    return '<div style="border:1px solid #666;padding:4px;text-align:center;font-size:8.5pt">' + esc(name) + '</div>';
+  }).join('\n');
 
-  // 部会員セクション
-  html.push('    <div style="width:100%;border-top:1.5px solid #ccc;margin-top:16px;padding-top:10px">');
-  html.push('      <div style="text-align:center;font-size:10pt;font-weight:700;margin-bottom:8px;letter-spacing:.2em">部　会　員</div>');
-  html.push('      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px">');
-  members.forEach(function(m) {
-    html.push('        <div style="border:1px solid #666;padding:4px;text-align:center;font-size:8.5pt">' + esc(m) + '</div>');
-  });
-  html.push('      </div>');
-  html.push('    </div>');
+  return [
+    '<div class="page">',
+    '  <div class="h-main">' + esc(currentNendo) + '　青年部組織図</div>',
+    '  <div style="display:flex;flex-direction:column;align-items:center;font-family:\'Noto Sans JP\',sans-serif;font-size:9pt;padding:2pt 0">',
 
-  html.push('  </div>');
-  html.push('  <div class="page-no">P8</div>');
-  html.push('</div>');
+    '    <!-- 総会 -->',
+    '    <div style="border:1.5px solid #111;padding:4px 36px;font-size:10.5pt;font-weight:700;letter-spacing:.25em;background:#fff">総　会</div>',
 
-  return html.join('\n');
+    advisorBlock,
+
+    '    <!-- 会長 -->',
+    '    <div style="border:1.5px solid #111;padding:4px 28px;font-size:10.5pt;font-weight:700;background:#fff">',
+    '      会　長　' + esc(presidentName),
+    '    </div>',
+
+    '    <div style="width:1.5px;height:24px;background:#333;margin:0 auto"></div>',
+
+    '    <!-- 役員会ブロック（十字ハブ） -->',
+    '    <div style="position:relative;width:420px;text-align:center;padding:26px 0;margin-bottom:2px">',
+    '      <div style="position:absolute;top:0;bottom:0;left:50%;width:1.5px;background:#333;margin-left:-0.75px;z-index:1"></div>',
+    '      <div style="position:absolute;top:50%;left:50px;right:50px;height:1.5px;background:#333;margin-top:-0.75px;z-index:1"></div>',
+    '      <div style="position:absolute;top:0;bottom:0;left:50px;width:1.5px;background:#333;margin-left:-0.75px;z-index:1"></div>',
+    '      <div style="position:absolute;top:0;bottom:0;right:50px;width:1.5px;background:#333;margin-right:-0.75px;z-index:1"></div>',
+    '      <!-- 中央: 役員会 -->',
+    '      <div style="position:relative;z-index:2;display:inline-block;border:1.5px solid #111;background:#fff;padding:6px 20px;font-weight:700;letter-spacing:.1em;font-size:10pt">役員会</div>',
+    '      <!-- 左上: 事務局 -->',
+    '      <div style="position:absolute;top:-10px;left:50px;transform:translateX(-50%);z-index:2;border:1px solid #333;background:#fff;padding:4px 12px;text-align:center;min-width:105px;font-weight:700;font-size:9.5pt">',
+    '        事務局',
+    '        <div style="font-weight:400;font-size:8.5pt;margin-top:3px">' + esc(officeName) + '</div>',
+    '      </div>',
+    '      <!-- 左下: 事務局補佐 -->',
+    '      <div style="position:absolute;bottom:-10px;left:50px;transform:translateX(-50%);z-index:2;border:1px solid #333;background:#fff;padding:4px 12px;text-align:center;min-width:105px;font-weight:700;font-size:9.5pt">',
+    '        事務局補佐',
+    '        <div style="font-weight:400;font-size:8.5pt;margin-top:3px">' + esc(subOfficeName) + '</div>',
+    '      </div>',
+    '      <!-- 右上: 会計監査 -->',
+    '      <div style="position:absolute;top:-10px;right:50px;transform:translateX(50%);z-index:2;border:1px solid #333;background:#fff;padding:4px 12px;text-align:center;min-width:105px;font-weight:700;font-size:9.5pt">',
+    '        会計監査',
+    '        <div style="font-weight:400;font-size:8.5pt;margin-top:3px">' + esc(auditorName) + '</div>',
+    '      </div>',
+    '      <!-- 右下: 会計 -->',
+    '      <div style="position:absolute;bottom:-10px;right:50px;transform:translateX(50%);z-index:2;border:1px solid #333;background:#fff;padding:4px 12px;text-align:center;min-width:105px;font-weight:700;font-size:9.5pt">',
+    '        会　計',
+    '        <div style="font-weight:400;font-size:8.5pt;margin-top:3px">' + esc(accountantName) + '</div>',
+    '      </div>',
+    '    </div>',
+
+    '    <div style="width:1.5px;height:24px;background:#333;margin:0 auto"></div>',
+
+    '    <!-- 副会長 -->',
+    '    <div style="border:1px solid #333;background:#fff;padding:4px 16px;font-weight:700;font-size:9.5pt;text-align:center">',
+    '      ' + viceLabel,
+    '      <div style="font-weight:400;font-size:8.5pt;margin-top:3px">' + esc(vicePresName) + '</div>',
+    '    </div>',
+
+    committeeBlock,
+
+    '    <!-- 部会員 -->',
+    '    <div style="width:100%;border-top:1.5px solid #ccc;margin-top:16px;padding-top:10px">',
+    '      <div style="text-align:center;font-size:10pt;font-weight:700;margin-bottom:8px;letter-spacing:.2em">部　会　員</div>',
+    '      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px">',
+    membersGrid || '<div style="grid-column:1/-1;text-align:center;font-size:9pt">部会員データなし</div>',
+    '      </div>',
+    '    </div>',
+
+    '  </div>',
+    '  <div class="page-no">P8</div>',
+    '</div>'
+  ].join('\n');
 }
 
-// ─────────────────────────────────────────────
-//  P9-10: 会員名簿
-// ─────────────────────────────────────────────
+// ============================================================
+// P9-10 会員名簿
+// ============================================================
 
-function buildMemberListPage(ss) {
-  var sheet = ss.getSheetByName('P9\u3000会員名簿①');
-  if (!sheet) return '<!-- P9シートが見つかりません -->';
+function buildMemberPage(ss) {
+  // 列: 0=No, 1=役職, 2=氏名, 3=会社名, 4=〒, 5=住所, 6=TEL, 7=FAX, 8=備考
+  var rows = getSheetRows(ss, SHEET_NAMES.MEMBERS, 9);
 
-  var data = sheet.getDataRange().getValues();
+  var tableRows = '';
+  rows.forEach(function(r) {
+    var no      = tv(r[0]);
+    var role    = tv(r[1]);
+    var name    = tv(r[2]);
+    var company = tv(r[3]);
+    var zip     = tv(r[4]);
+    var addr    = tv(r[5]);
+    var tel     = tv(r[6]);
 
-  var html = [];
-  html.push('<!-- ===== P9-10 会員名簿 ===== -->');
-  html.push('<div class="page">');
-  html.push('  <div class="h-main">会員名簿</div>');
-  html.push('  <table class="tbl-sm">');
-  html.push('    <thead><tr>' +
-    '<th style="width:26pt">No</th>' +
-    '<th style="width:56pt">役職</th>' +
-    '<th style="width:66pt">氏名</th>' +
-    '<th>会社名</th>' +
-    '<th>住　所</th>' +
-    '<th style="width:80pt">TEL</th>' +
-    '</tr></thead>');
-  html.push('    <tbody>');
+    if (!no && !name) return;
 
-  // 会員データは Row3 (index 2) から 2行1セット
-  var i = 2;
-  while (i + 1 < data.length) {
-    var row1 = data[i];
-    var row2 = data[i + 1];
+    var fullAddr = zip ? '〒' + zip + '　' + addr : addr;
 
-    var no      = trimVal(row1[0]);
-    var role    = trimVal(row1[1]);
-    var name    = trimVal(row1[2]);
-    var company = trimVal(row1[4]);
-    var zip     = trimVal(row1[7]);
-    var address = trimVal(row1[8]);
-
-    // No と名前が両方空ならスキップ
-    if (no === '' && name === '') {
-      i += 2;
-      continue;
-    }
-
-    // TEL: 2行目の ColH (index 7)
-    var telRaw = trimVal(row2[7]);
-    // "TEL " プレフィックスを除去、" ・ FAX ..." サフィックスを除去
-    var tel = telRaw.replace(/^TEL\s*/i, '').replace(/\s*・\s*FAX.*/i, '').trim();
-
-    // 住所: 郵便番号 + 住所
-    var fullAddress = '';
-    if (zip !== '' && address !== '') {
-      fullAddress = '〒' + zip + ' ' + address;
-    } else if (address !== '') {
-      fullAddress = address;
-    } else if (zip !== '') {
-      fullAddress = '〒' + zip;
-    }
-
-    html.push('      <tr>' +
-      '<td class="tc">' + esc(no) + '</td>' +
-      '<td class="tc">' + esc(role) + '</td>' +
-      '<td>' + esc(name) + '</td>' +
+    tableRows +=
+      '<tr>' +
+      '<td class="tc">' + esc(no)      + '</td>' +
+      '<td class="tc">' + esc(role)    + '</td>' +
+      '<td>' + esc(name)    + '</td>' +
       '<td>' + esc(company) + '</td>' +
-      '<td>' + esc(fullAddress) + '</td>' +
-      '<td>' + esc(tel) + '</td>' +
-      '</tr>');
+      '<td>' + esc(fullAddr)+ '</td>' +
+      '<td>' + esc(tel)     + '</td>' +
+      '</tr>\n';
+  });
 
-    i += 2;
-  }
+  if (!tableRows) tableRows = '<tr><td colspan="6" class="tc">データなし</td></tr>\n';
 
-  html.push('    </tbody>');
-  html.push('  </table>');
-  html.push('  <div class="page-no">P9-10</div>');
-  html.push('</div>');
-
-  return html.join('\n');
+  return [
+    '<div class="page">',
+    '  <div class="h-main">会員名簿</div>',
+    '  <table class="tbl-sm">',
+    '    <thead><tr>',
+    '      <th style="width:26pt">No</th>',
+    '      <th style="width:56pt">役職</th>',
+    '      <th style="width:66pt">氏名</th>',
+    '      <th>会社名</th>',
+    '      <th>住　所</th>',
+    '      <th style="width:80pt">TEL</th>',
+    '    </tr></thead>',
+    '    <tbody>',
+    tableRows,
+    '    </tbody>',
+    '  </table>',
+    '  <div class="page-no">P9-10</div>',
+    '</div>'
+  ].join('\n');
 }
 
-// ─────────────────────────────────────────────
-//  P11: 会則①（静的）
-// ─────────────────────────────────────────────
+// ============================================================
+// P11 会則①（静的）
+// ============================================================
 
 function buildBylaws1Page() {
   return [
-    '<!-- ===== P11 規約① ===== -->',
     '<div class="page">',
     '  <div class="h-main" style="margin-bottom:2pt">埼玉県トラック協会所沢支部青年部会</div>',
     '  <div class="h-main">会　　　則</div>',
@@ -1012,13 +838,12 @@ function buildBylaws1Page() {
   ].join('\n');
 }
 
-// ─────────────────────────────────────────────
-//  P12: 会則②（静的）
-// ─────────────────────────────────────────────
+// ============================================================
+// P12 会則②（静的）
+// ============================================================
 
 function buildBylaws2Page() {
   return [
-    '<!-- ===== P12 規約② ===== -->',
     '<div class="page">',
     '  <div class="h-main" style="margin-bottom:14pt">会則（続き）</div>',
     '  <div class="rule-heading">総会</div>',
@@ -1050,13 +875,12 @@ function buildBylaws2Page() {
   ].join('\n');
 }
 
-// ─────────────────────────────────────────────
-//  P13: 慶弔規定（静的）
-// ─────────────────────────────────────────────
+// ============================================================
+// P13 慶弔規定（静的）
+// ============================================================
 
 function buildBylaws3Page() {
   return [
-    '<!-- ===== P13 慶弔規定 ===== -->',
     '<div class="page">',
     '  <div class="h-main" style="margin-bottom:2pt">埼玉県トラック協会所沢支部青年部会</div>',
     '  <div class="h-main">慶　弔　規　定</div>',
@@ -1064,7 +888,12 @@ function buildBylaws3Page() {
     '  <div class="rule-block"><span class="rule-no">第１条</span><span class="rule-body">（目的）この定義は、埼玉県トラック協会所沢支部青年部会の会員の平等な立場で公平かつ有意義な関係を維持する事を目的とする。</span></div>',
     '  <div class="rule-block"><span class="rule-no">第２条</span><span class="rule-body">（定義）この定義は、次の各号に定めるところによる。但し役員会で決定し定例総会において承認されたものに限る。</span></div>',
     '  <table style="margin:8pt 0">',
-    '    <thead><tr><th style="width:110pt">区　分</th><th style="width:80pt">対　象</th><th style="width:90pt">金　額</th><th>備　考</th></tr></thead>',
+    '    <thead><tr>',
+    '      <th style="width:110pt">区　分</th>',
+    '      <th style="width:80pt">対　象</th>',
+    '      <th style="width:90pt">金　額</th>',
+    '      <th>備　考</th>',
+    '    </tr></thead>',
     '    <tbody>',
     '      <tr><td>１・会員の結婚</td><td></td><td class="tr">３０，０００円</td><td>祝電１通</td></tr>',
     '      <tr><td>２・会員実子の誕生</td><td></td><td class="tr">１０，０００円</td><td></td></tr>',
